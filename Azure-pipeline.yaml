@@ -1,0 +1,251 @@
+﻿
+trigger:
+  branches:
+    include:
+    - main
+  paths:
+    include:
+    - ClientApp/*
+    exclude:
+    - README.md
+variables:
+   dockerimage: 'angularnew'
+   dockerbuildid: '$(Build.BuildNumber)'
+   dockerreg: 'azure-arc'
+
+stages:
+- stage: build
+  pool:
+     vmImage: 'windows-2022'
+  variables:
+     Project: '$(Build.SourcesDirectory)/*.csproj'
+     solution: '$(Build.SourcesDirectory)/*.sln'
+     buildPlatform: 'Any CPU'
+     buildConfiguration: 'Release'
+     dockerimage: 'angularnew'
+     dockerbuildid: '$(Build.BuildNumber)'
+     dockerreg: 'azure-arc'
+  displayName: 'Build the aspnet core project'
+  jobs:
+  - job: build
+    displayName: 'Build the aspnet core project'
+    steps:
+    
+    - task: NuGetToolInstaller@1
+      displayName: Install NugetVersion
+
+    - task: SonarCloudPrepare@1
+      displayName: Sonar Cloud prepration
+      inputs:
+        SonarCloud: 'sonarcloudconnection'
+        organization: 'astera'
+        scannerMode: 'MSBuild'
+        projectKey: 'astera_aspnet-angular'
+        projectName: 'aspnet-angular'
+
+    - task: NuGetCommand@2
+      displayName: Restore Nuget project
+      inputs:
+        restoreSolution: '$(solution)'
+
+    - task: Npm@1
+      displayName:  Install NPM 
+      enabled: true
+      inputs:
+        command: 'install'
+        workingDir: '$(Build.SourcesDirectory)/ClientApp'
+
+
+    - task: DotNetCoreCLI@2
+      enabled: false
+      displayName: Run DonetCli Test 
+      inputs:
+        command: 'test'
+        projects: '$(Build.SourcesDirectory)/TestProject1'
+        arguments: '--collect "Code Coverage" --logger "trx;LogFileName=test.trx" --results-directory "$(Agent.TempDirectory)"'
+
+
+    - task: DotNetCoreCLI@2
+      displayName: Run DonetCli Build 
+      inputs:
+        command: 'build'
+        projects: '$(solution)'
+
+    - task: Npm@1
+      displayName: Build NPM package
+      enabled: false
+      inputs:
+        command: 'custom'
+        workingDir: '$(Build.SourcesDirectory)/ClientApp'
+        customCommand: 'run prod'
+
+    - task: SonarCloudAnalyze@1
+      displayName: Run Code Analysis
+      enabled: true
+      
+    - task: SonarCloudPublish@1
+      enabled: true
+      displayName: Publish Quality Gate Result
+      inputs:
+        pollingTimeoutSec: '300'
+
+    - task: DotNetCoreCLI@2
+      displayName: Run DonetCli Publish
+      inputs:
+        command: 'publish'
+        publishWebProjects: true
+        arguments: '--configuration $(BuildConfiguration)  --output $(Build.ArtifactStagingDirectory)'
+        zipAfterPublish: false
+        modifyOutputPath: false
+
+    - task: PublishBuildArtifacts@1
+      displayName: Publish Artifact to Staging Directory
+      inputs:
+        PathtoPublish: '$(Build.ArtifactStagingDirectory)'
+        ArtifactName: 'drop'
+        publishLocation: 'Container'
+
+
+    - task: PublishTestResults@2
+      enabled: true
+      displayName: Publish Test Result to Agent.TempDirectory
+      inputs:
+        testResultsFormat: 'VSTest'
+        testResultsFiles: '**/*.trx'
+        searchFolder: '$(Agent.TempDirectory)'
+
+    - task: Docker@2
+      displayName: Build and Push Docker Image
+      enabled: false
+      inputs:
+        containerRegistry: '$(dockerreg)'
+        repository: '$(dockerimage)'
+        command: 'buildAndPush'
+        Dockerfile: '$(Build.SourcesDirectory)/deployment-files/Dockerfile'
+        buildContext: '$(Build.ArtifactStagingDirectory)'
+        tags: '$(dockerbuildid)'
+
+
+- stage: Deploy_the_app_server1   ## this task is only use to test multi stage concept 
+  dependsOn: build
+  pool: 'Docker-IT'
+  variables:
+  - group: dev-env
+  - group: VM-Cred
+  displayName: 'Deploy the app on Server 1'
+  jobs:
+  - job: Deploy_the_app_server1
+    displayName: 'Deploy the app on Server1'
+    steps:
+    - task: DownloadPipelineArtifact@2
+      enabled: false
+      inputs:
+        buildType: 'current'
+        artifactName: 'drop'
+        targetPath: 'c:\Temp'
+
+    - task: Tokenizer@0
+      inputs:
+        sourceFilesPattern: 'appsettings.json'
+        tokenDataSource: 'environmentVariables'
+        sourcePath: 'c:\Temp'
+
+- stage: Deploy_the_app_server2   ## this task is only use to test multi stage concept 
+  dependsOn: build
+  pool: 'Docker-IT'
+  variables:
+    value1: 'abc'
+  displayName: 'Deploy the app on Server 2'
+  jobs:
+  - job: Deploy_the_app_server2
+    displayName: 'Deploy the app on Server 2'
+    steps:
+    - task: DownloadPipelineArtifact@2
+      enabled: false
+      inputs:
+        buildType: 'current'
+        artifactName: 'drop'
+        targetPath: 'c:\Temp2'
+
+- stage: Deploy_the_Production   ## this task is only use to test multi stage concept 
+  dependsOn: 'Deploy_the_app_server2'
+  pool: 'Docker-IT'
+  variables:
+    value1: 'abc'
+  displayName: 'Deploy_the_Production'
+  jobs:
+  - job: Deploy_the_Production
+    displayName: 'Deploy_the_Production'
+    steps:
+
+    - task: DownloadPipelineArtifact@2
+      enabled: false
+      inputs:
+        buildType: 'current'
+        artifactName: 'drop'
+        targetPath: 'c:\TempProd'
+
+- stage: Deploy_the_Azure_webApp   ## this task is only use to test multi stage concept 
+  dependsOn: 'Build'
+  pool:
+     vmImage: 'windows-2022'
+  variables:
+    value1: 'abc'
+  displayName: 'Deploy_the_Azure_webApp'
+  jobs:
+  - job: Deploy_the_Azure_webApp
+    displayName: 'Deploy_the_Azure_webApp'
+    steps:
+    - task: CmdLine@2
+      enabled: false
+      displayName: 'display directory content'
+      inputs:
+        script: 'dir'
+        workingDirectory: '$(System.DefaultWorkingDirectory)'
+
+    - task: DownloadBuildArtifacts@1
+      displayName: 'Download Build Artifact'
+      inputs:
+        buildType: 'current'
+        downloadType: 'single'
+        artifactName: 'drop'
+        downloadPath: '$(System.ArtifactsDirectory)'
+
+    - task: CmdLine@2
+      enabled: false
+      displayName: 'display directory content'
+      inputs:
+        script: 'dir'
+        workingDirectory: '$(System.ArtifactsDirectory)/drop'
+
+    - task: AzureResourceManagerTemplateDeployment@3
+      displayName: 'Deploy Azure App resources'
+      enabled: false
+      inputs:
+        deploymentScope: 'Resource Group'
+        azureResourceManagerConnection: 'Pay-As-You-Go (ba569e0b-7e93-4f1a-bbab-bec2fabddca2)'
+        subscriptionId: 'ba569e0b-7e93-4f1a-bbab-bec2fabddca2'
+        action: 'Create Or Update Resource Group'
+        resourceGroupName: 'centapptestrg'
+        location: 'East US'
+        templateLocation: 'Linked artifact'
+        csmFile: '$(System.DefaultWorkingDirectory)/azure-arm.json'
+        deploymentMode: 'Incremental'
+
+    - task: AzureRmWebAppDeployment@4
+      enabled: false
+      displayName: 'Deploy App to Azure Infra'
+      inputs:
+        ConnectionType: 'AzureRM'
+        azureSubscription: 'Pay-As-You-Go (ba569e0b-7e93-4f1a-bbab-bec2fabddca2)'
+        appType: 'webApp'
+        WebAppName: 'centtestapp'
+        deployToSlotOrASE: true
+        ResourceGroupName: 'centapptestrg'
+        SlotName: 'staging'
+        package: '$(System.ArtifactsDirectory)/drop'
+
+
+
+
+

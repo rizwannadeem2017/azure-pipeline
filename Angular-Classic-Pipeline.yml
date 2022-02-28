@@ -1,0 +1,41 @@
+# Variable 'buildConfiguration' was defined in the Variables tab
+# Agent Queue 'Azure Pipelines' was used with unrecognized Agent Specification, vmImage property must be specified to determine image - https://docs.microsoft.com/en-us/azure/devops/pipelines/agents/hosted?view=azure-devops&tabs=yaml#software
+jobs:
+- job: Job_1
+  displayName: Agent job 1
+  pool:
+    name: Azure Pipelines
+  steps:
+  - checkout: self
+  - task: NuGetCommand@2
+    displayName: NuGet restore
+    inputs:
+      solution: Angular-test-proj/Angular-test-proj.csproj
+  - task: DotNetCoreCLI@2
+    displayName: dotnet test
+    inputs:
+      command: test
+      projects: $(Build.SourcesDirectory)/TestProject1
+      testRunTitle: --collect "Code Coverage" --logger "trx;LogFileName=test.trx" --results-directory "$(Agent.TempDirectory)"
+  - task: DotNetCoreCLI@2
+    displayName: dotnet build
+    inputs:
+      projects: $(Build.SourcesDirectory)/Angular-test-proj/Angular-test-proj.csproj
+  - task: DotNetCoreCLI@2
+    displayName: dotnet publish
+    inputs:
+      command: publish
+      arguments: --configuration $(BuildConfiguration)  --output       $(Build.ArtifactStagingDirectory)
+      zipAfterPublish: false
+      modifyOutputPath: false
+      workingDirectory: $(Build.SourcesDirectory)/Angular-test-proj
+  - task: PublishBuildArtifacts@1
+    displayName: 'Publish Artifact: drop'
+  - task: PublishTestResults@2
+    displayName: Publish Test Results **/*.trx
+    inputs:
+      testRunner: VSTest
+      testResultsFiles: '**/*.trx'
+      searchFolder: $(Agent.TempDirectory)
+      mergeTestResults: true
+...
